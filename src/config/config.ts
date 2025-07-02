@@ -6,6 +6,6 @@ export const model = new ChatGoogleGenerativeAI({
 });
 
 export const embeddings = new GoogleGenerativeAIEmbeddings({
-    model: "gemini-embedding-exp-03-07",
+    model: "text-embedding-004",
     apiKey: process.env.GEMINI_API_KEY,
 });

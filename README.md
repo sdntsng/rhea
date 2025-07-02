@@ -8,6 +8,7 @@ A production-ready Telegram bot with long-term memory capabilities using LangGra
 - **🔭 Observability & Evaluation**: Integrates with LangSmith for tracing, monitoring, and debugging.
 - **🐳 Dockerized**: Comes with `docker-compose` for easy and reproducible deployments.
 - **⚡ Async Architecture**: Built on Node.js for high-performance, concurrent operations.
+- **🛠️ Tool Integration**: Composio tools for email, calendar, docs, and more.
 
 ### Technology Stack
 - **Backend**: Node.js, TypeScript
@@ -56,20 +57,180 @@ Your `.env` file should contain the following keys:
 
 ---
 
-### How Memory Works
+## 🧠 How Memory and Intelligence Works
 
-The bot's long-term memory is managed through a process of ingestion and relevance-based retrieval.
+Rhea uses a sophisticated multi-layered architecture that combines **vector-based memory**, **stateful conversations**, and **tool integration** to provide intelligent, context-aware responses.
 
-#### Ingestion
-- When a user sends a message, both the user's input and the bot's subsequent response are processed.
-- Each message is converted into a numerical vector representation using Google's `text-embedding-004` model.
-- These vectors, along with the original text and metadata (e.g., `type: 'user'` or `type: 'bot'`), are stored as documents in the `conversations` table in the PostgreSQL database.
+### 📊 Architecture Overview
 
-#### Retrieval
-- When a new message is received, it is also converted into a vector.
-- This new vector is used to perform a similarity search against all the vectors stored in the `conversations` table.
-- The **top 2 most relevant documents** (i.e., past conversation snippets) are retrieved from the database.
-- These retrieved snippets are then passed to the Google Gemini model as part of the context, allowing the bot to generate a response that is informed by relevant past interactions.
+```
+User Message → LangGraph Workflow → Response
+     ↓              ↓                   ↓
+  Vector DB    Conversation State    Tool Calls
+ (Long-term)    (Short-term)       (Real-time)
+```
+
+### 🔄 The LangGraph Workflow
+
+Rhea's intelligence is powered by a **LangGraph StateGraph** with the following flow:
+
+```mermaid
+graph TD
+    A[User Message] --> B[Retrieve Context]
+    B --> C[Generate Response]
+    C --> D{Has Tool Calls?}
+    D -->|Yes| E[Execute Tools]
+    D -->|No| F[End]
+    E --> G[Generate Final Response]
+    G --> F[End]
+```
+
+#### **1. State Management**
+```typescript
+interface AgentState {
+    question: string;        // Current user question
+    context: string;         // Retrieved relevant history
+    answer: AIMessage;       // LLM response with potential tool calls
+    history: BaseMessage[];  // Conversation thread history
+}
+```
+
+#### **2. Workflow Nodes**
+
+**🔍 Retrieve Node** (`retrieve`)
+- Converts user question to vector embeddings using `text-embedding-004`
+- Performs similarity search against conversation history in PostgreSQL
+- Retrieves **top 2 most relevant** past messages/responses
+- Passes context to next node
+
+**🧠 Generate Node** (`generate`)
+- Combines retrieved context + conversation history + current question
+- Uses system prompt that includes tool descriptions
+- Invokes Google Gemini with tool bindings
+- Returns response (potentially with tool calls)
+
+**🛠️ Tools Node** (`tools`) 
+- Executes any tool calls from the LLM response
+- Maps tool names to Composio tool instances
+- Handles errors gracefully with fallback messages
+- Returns tool outputs as ToolMessages
+
+**✨ Generate After Tools** (`generate_after_tools`)
+- Takes tool outputs and generates final human-readable response
+- Synthesizes tool results into natural language
+
+### 💾 Memory Systems
+
+#### **1. Long-term Memory (Vector Database)**
+
+**Storage Process:**
+1. **User Message Ingestion**: Every user message is converted to vectors and stored
+2. **Bot Response Ingestion**: Every bot response is also vectorized and stored
+3. **Metadata Tracking**: Each message includes `{ type: 'user'|'bot', threadId }`
+
+**Retrieval Process:**
+1. **Question Vectorization**: New user question → embedding vector
+2. **Similarity Search**: Compare against all stored conversation vectors
+3. **Context Selection**: Return top 2 most relevant historical messages
+4. **Context Injection**: Relevant history becomes part of system prompt
+
+#### **2. Short-term Memory (Checkpointer)**
+
+**PostgreSQL Checkpointer** stores:
+- **Thread State**: Complete conversation state per `thread_id`
+- **Message History**: All messages in current conversation thread
+- **Tool Execution History**: Records of tools used and outputs
+- **State Persistence**: Maintains state between bot restarts
+
+**Thread Management:**
+- Each Telegram chat gets unique `thread_id` (chat ID)
+- Conversation state is automatically loaded/saved
+- History accumulates across entire conversation
+
+### 🎯 System Prompting
+
+#### **Base System Prompt**
+```typescript
+`You are Rhea, a helpful AI assistant with access to powerful tools. You can:
+
+🔧 **Available Tools:**
+- **Email**: Check, send, and manage Gmail
+- **Calendar**: Schedule, view, and manage Google Calendar events  
+- **Documents**: Create, edit, and manage Google Docs and Sheets
+- **File Management**: Access and organize Google Drive files
+- **Communication**: Send messages via Discord
+- **Project Management**: Manage tasks and projects in Notion and Linear
+- **Development**: Interact with GitHub repositories
+
+📋 **Instructions:**
+- Answer questions based on the provided context and conversation history
+- Use tools when the user requests actions (checking email, scheduling, etc.)
+- Be proactive about suggesting tool usage when relevant
+- Always be helpful and informative
+
+🔍 **Context from previous conversations:**
+${retrievedContext}
+
+Remember: You have access to the user's connected accounts through Composio tools!`
+```
+
+#### **Context Injection**
+- **Retrieved Context**: Top 2 relevant messages from vector search
+- **Conversation History**: All messages from current thread
+- **Tool Descriptions**: Available Composio tools with schemas
+
+### 🛠️ Tool Calling Mechanism
+
+#### **Tool Discovery**
+```typescript
+const availableTools = await toolset.getTools();
+const modelWithTools = model.bindTools(availableTools);
+```
+
+#### **Tool Execution Flow**
+1. **LLM Decision**: Model decides to call tools based on user request
+2. **Tool Mapping**: Map tool names to actual Composio tool instances  
+3. **Parallel Execution**: Execute multiple tools simultaneously if needed
+4. **Result Processing**: Convert tool outputs to ToolMessages
+5. **Final Generation**: LLM synthesizes tool results into response
+
+#### **Error Handling**
+- **Tool Not Found**: Graceful fallback with error message
+- **Execution Errors**: Catch exceptions and return error details
+- **Timeout Handling**: Prevent hanging on slow tool calls
+
+### 🔄 Message Flow Example
+
+**User**: "Check my email"
+
+1. **Retrieve**: Search vector DB for email-related conversations
+2. **Generate**: LLM sees request + context + tool schemas → decides to call Gmail tool
+3. **Tools**: Execute `gmail_check_inbox` tool via Composio
+4. **Generate After Tools**: Convert tool output to natural language response
+
+**User**: "Who emailed me yesterday about the project?"
+
+1. **Retrieve**: Find relevant context (might include previous email discussions)
+2. **Generate**: LLM sees context suggests checking recent emails → calls Gmail tools
+3. **Tools**: Execute `gmail_search` with yesterday's date filter  
+4. **Generate After Tools**: Summarize found emails in user-friendly format
+
+### 🎛️ Configuration Parameters
+
+| Parameter | Value | Purpose |
+|-----------|-------|---------|
+| **Similarity Search Limit** | 2 documents | Balance context vs noise |
+| **Embedding Model** | `text-embedding-004` | High-quality vector representations |
+| **LLM Model** | `gemini-2.5-flash` | Fast, capable reasoning |
+| **Thread Persistence** | PostgreSQL | Reliable state management |
+| **Tool Timeout** | 30s | Prevent hanging operations |
+
+### 📈 Memory Efficiency
+
+- **Selective Retrieval**: Only top relevant messages, not entire history
+- **Conversation Chunking**: Long conversations broken into manageable pieces
+- **Token Management**: System prompts optimized for token efficiency
+- **State Compression**: Checkpointer efficiently stores conversation state
 
 ---
 
