@@ -1,0 +1,60 @@
+### Project Scope and Development Plan for Rhea - FounderBot
+
+#### Project Overview
+**Name:** Rhea - FounderBot
+**Purpose:** A production-ready Telegram bot with long-term memory capabilities using LangGraph, PostgreSQL vector storage, and LangSmith for observability.
+**GitHub Repository:** `sdntsng/rhea`
+
+#### Core Principles
+1.  **Modularity**: Code should be organized into logical modules (`agent`, `db`, `telegram`).
+2.  **Configuration over Code**: Use environment variables for all secrets and configurations (`.env`).
+3.  **Infrastructure as Code**: All services should be defined in `docker-compose.yml`.
+4.  **Observability First**: Integrate LangSmith for tracing and debugging from the start.
+5.  **Type Safety**: Leverage TypeScript for a robust and maintainable codebase.
+
+#### Technology Stack
+- **Backend**: Node.js, TypeScript
+- **AI Framework**: LangChain.js (`LangGraph`)
+- **LLM**: Google Gemini (`gemini-2.5-flash`)
+- **Embeddings**: Google Gemini (`text-embedding-004`)
+- **Vector Store**: PostgreSQL with `pgvector`
+- **Checkpointer**: PostgreSQL
+- **Observability**: LangSmith
+- **Containerization**: Docker, Docker Compose
+
+---
+
+### Development Phases
+
+#### Phase 1: Core Implementation (1-2 weeks)
+**Objective**: Build the foundational, Dockerized Telegram bot with a functioning LangGraph agent.
+- **Tasks**:
+    - **P1-01: Docker Setup**: Create `docker-compose.yml` for `postgres` and `bot` services.
+    - **P1-02: Project Structure**: Set up the `src/agent`, `src/db`, and `src/telegram` directories.
+    - **P1-03: DB Connection**: Implement PostgreSQL connection logic and schema setup for `pgvector`.
+    - **P1-04: Basic Agent**: Create a simple LangGraph agent that can respond to a user message.
+    - **P1-05: Telegram Adapter**: Connect the agent to the Telegraf bot.
+- **Success Criteria**:
+    - `docker-compose up` successfully starts the bot and database.
+    - The bot responds to messages in Telegram.
+    - All interactions are traced in LangSmith.
+
+#### Phase 2: Long-Term Memory (1 week)
+**Objective**: Integrate `pgvector` to give the agent long-term memory.
+- **Tasks**:
+    - **P2-01: Vector Store**: Use `PGVectorStore` to store conversation history.
+    - **P2-02: RAG Implementation**: Add a `retrieve` step to the LangGraph agent to perform a similarity search over the vector store.
+    - **P2-03: History-Aware Prompts**: Update the agent's prompt to include the retrieved context.
+- **Success Criteria**:
+    - The bot can recall information from previous conversations.
+    - The RAG pipeline is visible and effective in LangSmith.
+
+#### Phase 3: Production Hardening (1 week)
+**Objective**: Prepare the bot for production deployment.
+- **Tasks**:
+    - **P3-01: Health Checks**: Add a `/health` endpoint to the bot service.
+    - **P3-02: Scalability**: Configure the `docker-compose.yml` for multi-instance scaling.
+    - **P3-03: Frontend Explorer**: Create a simple Next.js dashboard to view conversation histories from the database.
+- **Success Criteria**:
+    - The bot is stable and can handle multiple concurrent conversations.
+    - The frontend explorer provides a clear view of the bot's memory. 
