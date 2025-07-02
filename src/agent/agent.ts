@@ -1,82 +1,52 @@
-import { BaseMessage } from "@langchain/core/messages";
-import { StateGraph, END, StateGraphArgs } from "@langchain/langgraph";
+import {
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+} from "@langchain/core/messages";
+import { StateGraph, Annotation, START, END } from "@langchain/langgraph";
 import { model } from "../config/config";
 import { vectorStore, checkpointer } from "../db/pg";
-import { Composio } from "composio-core";
 
-const composio = new Composio({ apiKey: process.env.COMPOSIO_API_KEY });
+const StateAnnotation = Annotation.Root({
+    question: Annotation<string>,
+    context: Annotation<string>,
+    answer: Annotation<AIMessage>,
+    history: Annotation<BaseMessage[]>({
+        reducer: (left, right) => left.concat(right),
+        default: () => [],
+    }),
+});
 
-interface AgentState {
-    question: string;
-    context: string;
-    answer: string;
-    history: BaseMessage[];
-    tools: any[];
-}
-
-const graphState: StateGraphArgs<AgentState>['channels'] = {
-    question: { value: (x, y) => y, default: () => "" },
-    context: { value: (x, y) => y, default: () => "" },
-    answer: { value: (x, y) => y, default: () => "" },
-    history: { value: (x, y) => x.concat(y), default: () => [] },
-    tools: { value: (x, y) => y, default: () => [] }
-};
-
-const retrieve = async (state: AgentState) => {
+const retrieve = async (state: typeof StateAnnotation.State) => {
     const relevantDocs = await vectorStore.similaritySearch(state.question, 2);
-    const context = relevantDocs.map(doc => doc.pageContent).join('\n');
-    return { ...state, context };
+    const context = relevantDocs.map((doc) => doc.pageContent).join("\n");
+    return { context };
 };
 
-const generate = async (state: AgentState) => {
-    const tools = await composio.getTools();
-    const modelWithTools = model.bindTools(tools);
-
-    const prompt = `
-You are Rhea, a helpful AI assistant. Answer the user's question based on the provided context and conversation history. You have access to the following tools:
-
-{tools}
-
-Context:
-${state.context}
-
-History:
-${state.history.map(msg => msg.content).join('\n')}
-
-Question:
-${state.question}
-`;
-    const result = await modelWithTools.invoke(prompt);
-    return { ...state, answer: result.content.toString(), tools: result.tool_calls };
-};
-
-const toolNode = async (state: AgentState) => {
-    const toolCalls = state.tools;
-    const toolResponses = await composio.executeTools(toolCalls);
+const generate = async (state: typeof StateAnnotation.State) => {
+    const systemMessage = new SystemMessage(
+        `You are Rhea, a helpful AI assistant. Answer the user's question based on the provided context and conversation history.\n\nContext:\n${state.context}`
+    );
     
-    return { ...state, answer: toolResponses.join('\n'), tools: [] };
-}
+    const messages: BaseMessage[] = [
+        systemMessage,
+        ...state.history,
+        new HumanMessage(state.question),
+    ];
 
-const shouldContinue = (state: AgentState) => {
-    if (state.tools && state.tools.length > 0) {
-        return "toolNode";
-    }
-    return END;
+    const result = await model.invoke(messages);
+    return { answer: result };
 };
 
-const graph = new StateGraph({ channels: graphState })
-    .addNode("retrieve", retrieve)
-    .addNode("generate", generate)
-    .addNode("toolNode", toolNode)
-    .addEdge("retrieve", "generate")
-    .addConditionalEdges("generate", shouldContinue, {
-        [END]: END,
-        toolNode: "toolNode",
-    })
-    .addEdge("toolNode", "generate");
+export function getAgent() {
+    const workflow = new StateGraph(StateAnnotation)
+        .addNode("retrieve", retrieve)
+        .addNode("generate", generate)
+        .addEdge(START, "retrieve")
+        .addEdge("retrieve", "generate")
+        .addEdge("generate", END)
+        .compile({ checkpointer });
 
-graph.setEntryPoint("retrieve");
-
-export const getAgent = async () => {
-    return graph.compile({ checkpointer });
+    return workflow;
 }
