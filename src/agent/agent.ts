@@ -4,7 +4,7 @@ import { model } from "../config/config";
 import { vectorStore, checkpointer } from "../db/pg";
 import { Composio } from "composio-core";
 
-const composio = new Composio();
+const composio = new Composio({ apiKey: process.env.COMPOSIO_API_KEY });
 
 interface AgentState {
     question: string;

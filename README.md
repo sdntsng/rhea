@@ -52,6 +52,7 @@ Your `.env` file should contain the following keys:
 | `DATABASE_URL`        | PostgreSQL connection string for `pgvector`.       |
 | `LANGCHAIN_TRACING_V2`| Set to `true` to enable LangSmith.                 |
 | `LANGCHAIN_API_KEY`   | Your API key for LangSmith.                        |
+| `COMPOSIO_API_KEY`    | Your API key for Composio.                         |
 
 ---
 
@@ -67,8 +68,20 @@ The bot's long-term memory is managed through a process of ingestion and relevan
 #### Retrieval
 - When a new message is received, it is also converted into a vector.
 - This new vector is used to perform a similarity search against all the vectors stored in the `conversations` table.
-- The most relevant documents (i.e., past conversation snippets) are retrieved from the database.
+- The **top 2 most relevant documents** (i.e., past conversation snippets) are retrieved from the database.
 - These retrieved snippets are then passed to the Google Gemini model as part of the context, allowing the bot to generate a response that is informed by relevant past interactions.
+
+---
+
+### Connected Tools (via Composio)
+
+Rhea has access to the following tools, allowing it to perform a wide range of actions on your behalf:
+
+- **Collaboration**: Notion, Linear
+- **Communication**: Gmail, Discord
+- **Scheduling**: Google Calendar
+- **File Management**: Google Drive, Google Docs, Google Sheets
+- **Development**: GitHub
 
 ---
 
