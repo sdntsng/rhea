@@ -18,6 +18,7 @@ A production-ready Telegram bot with long-term memory capabilities using LangGra
 - **Checkpointer**: PostgreSQL
 - **Observability**: LangSmith
 - **Containerization**: Docker, Docker Compose
+- **Tools**: Composio
 
 ---
 
@@ -54,6 +55,23 @@ Your `.env` file should contain the following keys:
 
 ---
 
+### How Memory Works
+
+The bot's long-term memory is managed through a process of ingestion and relevance-based retrieval.
+
+#### Ingestion
+- When a user sends a message, both the user's input and the bot's subsequent response are processed.
+- Each message is converted into a numerical vector representation using Google's `text-embedding-004` model.
+- These vectors, along with the original text and metadata (e.g., `type: 'user'` or `type: 'bot'`), are stored as documents in the `conversations` table in the PostgreSQL database.
+
+#### Retrieval
+- When a new message is received, it is also converted into a vector.
+- This new vector is used to perform a similarity search against all the vectors stored in the `conversations` table.
+- The most relevant documents (i.e., past conversation snippets) are retrieved from the database.
+- These retrieved snippets are then passed to the Google Gemini model as part of the context, allowing the bot to generate a response that is informed by relevant past interactions.
+
+---
+
 ### Development
 
 To run the bot in a development environment with hot-reloading:
@@ -72,4 +90,4 @@ rhea/
 ├── docker-compose.yml # Production Docker configuration
 ├── package.json
 └── tsconfig.json
-``` 
+```
