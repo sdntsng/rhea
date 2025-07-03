@@ -1,0 +1,51 @@
+{
+    "services": [
+        {
+            "name": "Gmail",
+            "integration": "gmail",
+            "actions": [
+                { "name": "send_email", "type": "action" },
+                { "name": "check_inbox", "type": "action" }
+            ]
+        },
+        {
+            "name": "Google Calendar",
+            "integration": "google_calendar",
+            "actions": [
+                { "name": "create_event", "type": "action" },
+                { "name": "list_events", "type": "action" }
+            ]
+        },
+        {
+            "name": "GitHub",
+            "integration": "github",
+            "actions": [
+                { "name": "create_issue", "type": "action" },
+                { "name": "get_my_issues", "type": "action" }
+            ]
+        },
+        {
+            "name": "Discord",
+            "integration": "discord",
+            "actions": [
+                { "name": "send_message", "type": "action" }
+            ]
+        },
+        {
+            "name": "Notion",
+            "integration": "notion",
+            "actions": [
+                { "name": "create_page", "type": "action" },
+                { "name": "search", "type": "action" }
+            ]
+        },
+        {
+            "name": "Linear",
+            "integration": "linear",
+            "actions": [
+                { "name": "create_issue", "type": "action" },
+                { "name": "get_my_issues", "type": "action" }
+            ]
+        }
+    ]
+} 
