@@ -21,11 +21,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: npm run dev
+    command: python main.py
     ports:
       - "2608:3000"
     volumes:
-      - ./src:/usr/src/app/src
+      - ./app:/app
     depends_on:
       postgres:
         condition: service_healthy

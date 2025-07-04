@@ -1,23 +1,16 @@
 # Base image
-FROM node:20-slim
+FROM python:3.10-slim
 
 # Set working directory
-WORKDIR /usr/src/app
+WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
-
-# Install dependencies
-RUN npm install
+# Copy requirements and install dependencies
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy source code
 COPY . .
 
-# Build TypeScript
-RUN npm run build
-
-# Expose port (if needed for health checks)
-# EXPOSE 3000
-
-# Run the bot
-CMD [ "npm", "start" ]
+# Expose port and start app
+EXPOSE 3000
+CMD [ "python", "main.py" ]

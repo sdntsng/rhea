@@ -1,0 +1,752 @@
+# Multi-Service Agent Orchestration Documentation
+
+## Overview
+
+This documentation outlines the architecture and implementation of a multi-service agent orchestration system that intelligently routes user queries through Telegram to appropriate service-specific MCP (Model Context Protocol) servers using LangChain and Gemini.
+
+## Architecture Overview
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Telegram      │    │   Main LLM      │    │   Service       │
+│   Interface     │───▶│   Router        │───▶│   Detector      │
+│                 │    │   (Gemini)      │    │                 │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+                                │                       │
+                                │                       ▼
+                                │              ┌─────────────────┐
+                                │              │   MCP Server    │
+                                │              │   Selector      │
+                                │              └─────────────────┘
+                                │                       │
+                                │                       ▼
+                                │              ┌─────────────────┐
+                                │              │   Tool          │
+                                │              │   Executor      │
+                                │              └─────────────────┘
+                                │                       │
+                                ▼                       ▼
+                       ┌─────────────────┐    ┌─────────────────┐
+                       │   Response      │◀───│   Result        │
+                       │   Formatter     │    │   Aggregator    │
+                       └─────────────────┘    └─────────────────┘
+```
+
+## Core Components
+
+### 1. Telegram Interface Layer
+- **Purpose**: Handles incoming user messages and outgoing responses
+- **Technology**: Python Telegram Bot API
+- **Responsibilities**:
+  - Receive user queries
+  - Send formatted responses
+  - Handle authentication and user sessions
+
+### 2. Main LLM Router (Gemini)
+- **Purpose**: Primary intelligence layer for query understanding and orchestration
+- **Technology**: LangChain + Gemini
+- **Responsibilities**:
+  - Parse and understand user intent
+  - Determine if query requires external services
+  - Route to appropriate service handlers
+  - Format final responses
+
+### 3. Service Detector
+- **Purpose**: Identifies which service(s) are relevant to the user query
+- **Implementation**: Rule-based matching with LLM fallback
+- **Supported Services**:
+  - Gmail
+  - Google Sheets
+  - Google Docs
+  - Notion
+  - Discord
+  - Linear
+
+### 4. MCP Server Selector
+- **Purpose**: Dynamically loads and manages MCP HTTP stream servers
+- **Implementation**: JSON-based configuration with runtime loading
+- **Features**:
+  - Service-specific MCP server registry
+  - Dynamic tool discovery
+  - Connection management
+
+### 5. Tool Executor
+- **Purpose**: Executes specific tools from selected MCP servers
+- **Implementation**: Async execution with error handling
+- **Features**:
+  - Tool parameter validation
+  - Result formatting
+  - Error recovery
+
+## Implementation Details
+
+### Service Configuration Structure
+
+```json
+{
+  "services": {
+    "gmail": {
+      "name": "Gmail",
+      "description": "Email management and communication service",
+      "mcp_server": "gmail-mcp-server",
+      "endpoint": "http://localhost:8001",
+      "keywords": ["email", "mail", "inbox", "send message", "compose"],
+      "example_tools": ["list_emails", "send_email", "search_emails"]
+    },
+    "google_sheets": {
+      "name": "Google Sheets",
+      "description": "Spreadsheet creation, editing, and data management",
+      "mcp_server": "sheets-mcp-server",
+      "endpoint": "http://localhost:8002",
+      "keywords": ["spreadsheet", "sheet", "data", "table", "calculate"],
+      "example_tools": ["read_sheet", "write_sheet", "create_sheet"]
+    },
+    "google_docs": {
+      "name": "Google Docs",
+      "description": "Document creation, editing, and collaboration",
+      "mcp_server": "docs-mcp-server",
+      "endpoint": "http://localhost:8003",
+      "keywords": ["document", "doc", "write", "text", "edit"],
+      "example_tools": ["read_doc", "write_doc", "create_doc"]
+    },
+    "notion": {
+      "name": "Notion",
+      "description": "Note-taking, database management, and workspace organization",
+      "mcp_server": "notion-mcp-server",
+      "endpoint": "http://localhost:8004",
+      "keywords": ["notion", "note", "database", "page", "workspace"],
+      "example_tools": ["create_page", "search_pages", "update_page"]
+    },
+    "discord": {
+      "name": "Discord",
+      "description": "Chat communication and server management",
+      "mcp_server": "discord-mcp-server",
+      "endpoint": "http://localhost:8005",
+      "keywords": ["discord", "chat", "server", "channel", "message"],
+      "example_tools": ["send_message", "read_messages", "manage_channels"]
+    },
+    "linear": {
+      "name": "Linear",
+      "description": "Issue tracking and project management",
+      "mcp_server": "linear-mcp-server",
+      "endpoint": "http://localhost:8006",
+      "keywords": ["linear", "issue", "ticket", "bug", "task", "project"],
+      "example_tools": ["create_issue", "list_issues", "update_issue"]
+    }
+  }
+}
+```
+
+### Query Processing Flow
+
+#### Step 1: Query Analysis
+```python
+def analyze_query(user_query: str) -> QueryAnalysis:
+    """
+    Analyze user query to determine intent and required services
+    """
+    prompt = f"""
+    Analyze this user query: "{user_query}"
+    
+    Determine:
+    1. Does this require external service integration? (yes/no)
+    2. Which service(s) are relevant? (gmail, google_sheets, google_docs, notion, discord, linear)
+    3. What is the primary action requested?
+    4. Extract key parameters needed for the action
+    
+    Return structured analysis.
+    """
+    
+    # Use Gemini to analyze
+    analysis = gemini_chain.invoke(prompt)
+    return parse_analysis(analysis)
+```
+
+#### Step 2: Service Detection
+```python
+def detect_services(query_analysis: QueryAnalysis) -> List[str]:
+    """
+    Detect which services are needed based on query analysis
+    """
+    detected_services = []
+    
+    # Keyword matching
+    for service, config in services_config.items():
+        if any(keyword in query_analysis.text.lower() 
+               for keyword in config['keywords']):
+            detected_services.append(service)
+    
+    # LLM fallback for ambiguous cases
+    if not detected_services:
+        detected_services = llm_service_detection(query_analysis)
+    
+    return detected_services
+```
+
+#### Step 3: Dynamic Tool Discovery and Selection
+```python
+async def discover_and_select_tools(services: List[str], user_query: str, intent: str) -> Dict:
+    """
+    Dynamically discover all available tools and select appropriate ones
+    """
+    selected_tools = {}
+    
+    for service in services:
+        config = services_config[service]
+        
+        # Connect to MCP server
+        mcp_client = await connect_mcp_server(config['endpoint'])
+        
+        # Fetch ALL available tools from the MCP server
+        available_tools = await mcp_client.list_tools()
+        
+        # Use LLM to select relevant tools based on descriptions
+        relevant_tools = await llm_select_tools(
+            available_tools=available_tools,
+            user_query=user_query,
+            intent=intent,
+            service_description=config['description'],
+            service_name=config['name']
+        )
+        
+        selected_tools[service] = {
+            'client': mcp_client,
+            'tools': relevant_tools,
+            'all_available': available_tools  # Keep for reference
+        }
+    
+    return selected_tools
+
+async def llm_select_tools(available_tools: List[Dict], user_query: str, intent: str, 
+                          service_description: str, service_name: str) -> List[Dict]:
+    """
+    Use LLM to intelligently select tools based on descriptions and user intent
+    """
+    # Format tool information for LLM
+    tools_info = []
+    for tool in available_tools:
+        tools_info.append({
+            'name': tool['name'],
+            'description': tool.get('description', ''),
+            'parameters': tool.get('inputSchema', {}).get('properties', {})
+        })
+    
+    selection_prompt = f"""
+    Service: {service_name}
+    Service Description: {service_description}
+    User Query: "{user_query}"
+    Intent: {intent}
+    
+    Available Tools:
+    {json.dumps(tools_info, indent=2)}
+    
+    Based on the user query and intent, select the most appropriate tool(s) from the available tools.
+    Consider:
+    1. Tool name and description relevance
+    2. Parameter requirements vs user query
+    3. Likelihood of achieving user's goal
+    
+    Return a JSON array of selected tool names and brief reasoning:
+    {{
+        "selected_tools": [
+            {{
+                "name": "tool_name",
+                "reasoning": "Why this tool is relevant"
+            }}
+        ]
+    }}
+    """
+    
+    # Use Gemini to select tools
+    response = await gemini_chain.ainvoke(selection_prompt)
+    selection = json.loads(response.content)
+    
+    # Return full tool objects for selected tools
+    selected_tools = []
+    for selection_item in selection['selected_tools']:
+        tool_name = selection_item['name']
+        tool_obj = next((t for t in available_tools if t['name'] == tool_name), None)
+        if tool_obj:
+            tool_obj['selection_reasoning'] = selection_item['reasoning']
+            selected_tools.append(tool_obj)
+    
+    return selected_tools
+```
+
+#### Step 4: Tool Execution
+```python
+async def execute_tools(selected_tools: Dict, parameters: Dict) -> Dict:
+    """
+    Execute selected tools with provided parameters
+    """
+    results = {}
+    
+    for service, tool_info in selected_tools.items():
+        try:
+            # Execute tools for this service
+            service_results = []
+            
+            for tool in tool_info['tools']:
+                result = await tool_info['client'].call_tool(
+                    tool['name'], 
+                    parameters.get(tool['name'], {})
+                )
+                service_results.append(result)
+            
+            results[service] = service_results
+            
+        except Exception as e:
+            results[service] = {'error': str(e)}
+    
+    return results
+```
+
+## Example Query Flows
+
+### Example 1: Email Query with Dynamic Tool Discovery
+**User Input**: "Show me my most recent emails"
+
+**Flow**:
+1. **Analysis**: Requires Gmail service, action is "retrieve recent emails"
+2. **Service Detection**: Gmail detected via keyword "emails"
+3. **Tool Discovery**: 
+   - Connect to Gmail MCP server
+   - Fetch ALL available tools (might include: `list_emails`, `search_emails`, `get_email_details`, `mark_as_read`, `send_email`, `create_draft`, etc.)
+   - LLM analyzes tools and selects `list_emails` based on description and user intent
+4. **Execution**: Call Gmail MCP with `list_emails` tool and parameters for recent emails
+5. **Response**: Format and return email list
+
+### Example 2: Complex Query with Multiple Tool Discovery
+**User Input**: "Find emails about project alpha and create a summary document"
+
+**Flow**:
+1. **Analysis**: Requires Gmail + Google Docs services
+2. **Service Detection**: Gmail and Google Docs detected
+3. **Tool Discovery**:
+   - **Gmail MCP**: Discovers tools like `search_emails`, `get_email_content`, `list_emails`, etc.
+   - **LLM Selection**: Chooses `search_emails` for finding project alpha emails
+   - **Google Docs MCP**: Discovers tools like `create_document`, `write_content`, `format_text`, etc.
+   - **LLM Selection**: Chooses `create_document` for summary creation
+4. **Execution**: Sequential execution with data passing between tools
+5. **Response**: Confirmation with document link
+
+## LangChain Integration
+
+### Chain Structure
+```python
+from langchain.chains import LLMChain
+from langchain.prompts import PromptTemplate
+from langchain_google_genai import ChatGoogleGenerativeAI
+
+# Initialize Gemini
+llm = ChatGoogleGenerativeAI(model="gemini-pro")
+
+# Query Analysis Chain
+analysis_prompt = PromptTemplate(
+    input_variables=["query"],
+    template="""
+    Analyze this user query for service requirements:
+    Query: {query}
+    
+    Provide structured analysis including:
+    - Required services
+    - Primary action
+    - Parameters needed
+    """
+)
+
+analysis_chain = LLMChain(llm=llm, prompt=analysis_prompt)
+
+# Response Formatting Chain
+response_prompt = PromptTemplate(
+    input_variables=["results", "original_query"],
+    template="""
+    Format these service results for the user:
+    Original Query: {original_query}
+    Results: {results}
+    
+    Provide a clear, helpful response.
+    """
+)
+
+response_chain = LLMChain(llm=llm, prompt=response_prompt)
+```
+
+### Integration with MCP Servers
+```python
+class MCPIntegration:
+    def __init__(self, services_config):
+        self.services_config = services_config
+        self.active_connections = {}
+        self.tool_cache = {}  # Cache discovered tools
+    
+    async def connect_service(self, service_name: str):
+        """Connect to MCP server for specific service"""
+        if service_name not in self.active_connections:
+            config = self.services_config[service_name]
+            client = await MCPClient.connect(config['endpoint'])
+            self.active_connections[service_name] = client
+        return self.active_connections[service_name]
+    
+    async def discover_all_tools(self, service_name: str, force_refresh: bool = False):
+        """Discover all available tools for a service"""
+        cache_key = f"{service_name}_tools"
+        
+        if not force_refresh and cache_key in self.tool_cache:
+            return self.tool_cache[cache_key]
+        
+        client = await self.connect_service(service_name)
+        
+        # Fetch complete tool list with descriptions and schemas
+        tools = await client.list_tools()
+        
+        # Enrich tools with additional metadata if available
+        enriched_tools = []
+        for tool in tools:
+            # Get detailed tool information
+            tool_details = await client.get_tool_details(tool['name'])
+            enriched_tool = {
+                'name': tool['name'],
+                'description': tool_details.get('description', ''),
+                'parameters': tool_details.get('inputSchema', {}),
+                'output_schema': tool_details.get('outputSchema', {}),
+                'examples': tool_details.get('examples', [])
+            }
+            enriched_tools.append(enriched_tool)
+        
+        # Cache the results
+        self.tool_cache[cache_key] = enriched_tools
+        return enriched_tools
+    
+    async def select_optimal_tools(self, service_name: str, user_query: str, 
+                                 intent: str, available_tools: List[Dict]) -> List[Dict]:
+        """Use LLM to select optimal tools based on comprehensive analysis"""
+        
+        config = self.services_config[service_name]
+        
+        # Create detailed prompt for tool selection
+        selection_prompt = f"""
+        You are an expert system for selecting the most appropriate tools for a user query.
+        
+        Service: {config['name']}
+        Service Description: {config['description']}
+        User Query: "{user_query}"
+        Extracted Intent: {intent}
+        
+        Available Tools (with full details):
+        {self._format_tools_for_prompt(available_tools)}
+        
+        Task: Select the most appropriate tool(s) that will best accomplish the user's goal.
+        
+        Consider:
+        1. Tool name and description alignment with user intent
+        2. Parameter requirements vs information extractable from user query
+        3. Tool output capabilities vs user's expected results
+        4. Efficiency - prefer single tools over multiple when possible
+        5. Example usage patterns if provided
+        
+        Respond with JSON:
+        {{
+            "selected_tools": [
+                {{
+                    "name": "tool_name",
+                    "confidence": 0.95,
+                    "reasoning": "Detailed explanation of why this tool is optimal",
+                    "parameter_mapping": {{
+                        "param1": "value_from_user_query",
+                        "param2": "inferred_default"
+                    }}
+                }}
+            ],
+            "execution_order": ["tool1", "tool2"],
+            "data_flow": "Description of how tool outputs connect"
+        }}
+        """
+        
+        # Get LLM selection
+        response = await gemini_chain.ainvoke(selection_prompt)
+        selection_data = json.loads(response.content)
+        
+        # Return enriched tool objects
+        selected_tools = []
+        for selection in selection_data['selected_tools']:
+            tool_name = selection['name']
+            tool_obj = next((t for t in available_tools if t['name'] == tool_name), None)
+            if tool_obj:
+                tool_obj.update({
+                    'selection_confidence': selection['confidence'],
+                    'selection_reasoning': selection['reasoning'],
+                    'parameter_mapping': selection['parameter_mapping']
+                })
+                selected_tools.append(tool_obj)
+        
+        return selected_tools, selection_data
+    
+    def _format_tools_for_prompt(self, tools: List[Dict]) -> str:
+        """Format tools for LLM prompt"""
+        formatted = []
+        for tool in tools:
+            tool_info = f"""
+            Tool: {tool['name']}
+            Description: {tool.get('description', 'No description available')}
+            Parameters: {json.dumps(tool.get('parameters', {}), indent=2)}
+            """
+            if tool.get('examples'):
+                tool_info += f"Examples: {json.dumps(tool['examples'], indent=2)}"
+            formatted.append(tool_info)
+        return "\n".join(formatted)
+    
+    async def execute_service_query(self, service_name: str, tool_info: Dict, params: Dict):
+        """Execute specific tool on service with dynamic parameter resolution"""
+        client = await self.connect_service(service_name)
+        
+        # Resolve parameters using LLM if needed
+        resolved_params = await self._resolve_parameters(tool_info, params)
+        
+        return await client.call_tool(tool_info['name'], resolved_params)
+    
+    async def _resolve_parameters(self, tool_info: Dict, raw_params: Dict) -> Dict:
+        """Resolve and validate parameters for tool execution"""
+        # Use parameter_mapping from tool selection
+        parameter_mapping = tool_info.get('parameter_mapping', {})
+        
+        resolved = {}
+        for param_name, param_config in tool_info.get('parameters', {}).items():
+            if param_name in parameter_mapping:
+                resolved[param_name] = parameter_mapping[param_name]
+            elif param_name in raw_params:
+                resolved[param_name] = raw_params[param_name]
+            elif param_config.get('required', False):
+                # Use LLM to infer required parameters
+                inferred_value = await self._infer_parameter_value(
+                    param_name, param_config, raw_params
+                )
+                if inferred_value is not None:
+                    resolved[param_name] = inferred_value
+        
+        return resolved
+    
+    async def _infer_parameter_value(self, param_name: str, param_config: Dict, 
+                                   context: Dict) -> Any:
+        """Use LLM to infer missing required parameters"""
+        inference_prompt = f"""
+        Parameter: {param_name}
+        Parameter Configuration: {json.dumps(param_config, indent=2)}
+        Available Context: {json.dumps(context, indent=2)}
+        
+        Infer the most appropriate value for this parameter based on the context.
+        If no reasonable value can be inferred, return null.
+        
+        Return only the parameter value as JSON.
+        """
+        
+        response = await gemini_chain.ainvoke(inference_prompt)
+        try:
+            return json.loads(response.content)
+        except:
+            return None
+```
+
+## Error Handling and Recovery
+
+### Service Unavailability
+```python
+async def handle_service_error(service_name: str, error: Exception):
+    """Handle service connection or execution errors"""
+    error_responses = {
+        'connection_error': f"Unable to connect to {service_name}. Please try again later.",
+        'authentication_error': f"Authentication failed for {service_name}. Please check credentials.",
+        'tool_error': f"Error executing {service_name} operation: {str(error)}"
+    }
+    
+    # Log error
+    logger.error(f"Service error for {service_name}: {error}")
+    
+    # Return user-friendly message
+    return error_responses.get(type(error).__name__, f"Unexpected error with {service_name}")
+```
+
+### Fallback Mechanisms
+- **Service Fallback**: If primary service fails, attempt alternative services
+- **Partial Results**: Return successful results even if some services fail
+- **Retry Logic**: Implement exponential backoff for transient failures
+
+## Security Considerations
+
+### Authentication
+- Each MCP server handles its own authentication
+- Secure token storage and rotation
+- User session management
+
+### Data Privacy
+- No persistent storage of user data
+- Secure communication channels
+- Audit logging for compliance
+
+### Rate Limiting
+- Implement rate limiting per service
+- User-specific quotas
+- Circuit breaker pattern for failing services
+
+## Deployment Architecture
+
+### Container Structure
+```yaml
+version: '3.8'
+services:
+  telegram-bot:
+    build: ./telegram-bot
+    environment:
+      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    depends_on:
+      - gmail-mcp
+      - sheets-mcp
+      - docs-mcp
+      - notion-mcp
+      - discord-mcp
+      - linear-mcp
+  
+  gmail-mcp:
+    build: ./mcp-servers/gmail
+    ports:
+      - "8001:8001"
+    
+  sheets-mcp:
+    build: ./mcp-servers/sheets
+    ports:
+      - "8002:8002"
+  
+  # ... other MCP servers
+```
+
+### Monitoring and Observability
+- **Metrics**: Response times, success rates, error rates per service
+- **Logging**: Structured logging with correlation IDs
+- **Tracing**: Distributed tracing across MCP servers
+- **Alerting**: Service health monitoring and alerts
+
+## Advanced Features
+
+### Tool Discovery and Caching
+```python
+class ToolDiscoveryManager:
+    def __init__(self):
+        self.discovery_cache = {}
+        self.cache_ttl = 3600  # 1 hour
+    
+    async def get_service_capabilities(self, service_name: str) -> Dict:
+        """Get comprehensive service capabilities"""
+        cache_key = f"{service_name}_capabilities"
+        
+        if self._is_cache_valid(cache_key):
+            return self.discovery_cache[cache_key]
+        
+        # Discover all tools
+        tools = await self.discover_all_tools(service_name)
+        
+        # Analyze capabilities using LLM
+        capabilities = await self._analyze_service_capabilities(service_name, tools)
+        
+        # Cache results
+        self.discovery_cache[cache_key] = {
+            'tools': tools,
+            'capabilities': capabilities,
+            'timestamp': time.time()
+        }
+        
+        return self.discovery_cache[cache_key]
+    
+    async def _analyze_service_capabilities(self, service_name: str, tools: List[Dict]) -> Dict:
+        """Use LLM to analyze and categorize service capabilities"""
+        analysis_prompt = f"""
+        Analyze the capabilities of {service_name} based on its available tools.
+        
+        Tools: {json.dumps(tools, indent=2)}
+        
+        Categorize the capabilities into:
+        1. Core Functions (main purpose)
+        2. Data Operations (CRUD operations)
+        3. Search and Query capabilities
+        4. Integration features
+        5. Advanced features
+        
+        Return structured analysis as JSON.
+        """
+        
+        response = await gemini_chain.ainvoke(analysis_prompt)
+        return json.loads(response.content)
+
+### Intelligent Tool Chaining
+```python
+class ToolChainOrchestrator:
+    def __init__(self, mcp_integration: MCPIntegration):
+        self.mcp_integration = mcp_integration
+    
+    async def create_execution_plan(self, services: List[str], user_query: str, 
+                                  selected_tools: Dict) -> Dict:
+        """Create intelligent execution plan for multiple tools"""
+        
+        planning_prompt = f"""
+        Create an execution plan for this multi-service query:
+        Query: "{user_query}"
+        
+        Selected Tools by Service:
+        {json.dumps(selected_tools, indent=2)}
+        
+        Determine:
+        1. Optimal execution order
+        2. Data dependencies between tools
+        3. Parallel execution opportunities
+        4. Error handling strategies
+        5. Data transformation requirements
+        
+        Return execution plan as JSON.
+        """
+        
+        response = await gemini_chain.ainvoke(planning_prompt)
+        return json.loads(response.content)
+    
+    async def execute_plan(self, execution_plan: Dict) -> Dict:
+        """Execute the planned tool chain"""
+        results = {}
+        execution_context = {}
+        
+        for step in execution_plan['steps']:
+            if step['type'] == 'parallel':
+                # Execute parallel steps
+                parallel_results = await asyncio.gather(*[
+                    self._execute_step(substep, execution_context) 
+                    for substep in step['substeps']
+                ])
+                results.update(dict(zip(step['step_ids'], parallel_results)))
+            else:
+                # Execute sequential step
+                result = await self._execute_step(step, execution_context)
+                results[step['id']] = result
+                execution_context[step['id']] = result
+        
+        return results
+    
+    async def _execute_step(self, step: Dict, context: Dict) -> Any:
+        """Execute individual step in the chain"""
+        service_name = step['service']
+        tool_info = step['tool']
+        
+        # Resolve parameters from context and step definition
+        params = await self._resolve_step_parameters(step, context)
+        
+        return await self.mcp_integration.execute_service_query(
+            service_name, tool_info, params
+        )
+```
+
+### Scalability Considerations
+- **Horizontal Scaling**: Multiple bot instances with load balancing
+- **Service Mesh**: Advanced routing and service discovery
+- **Async Processing**: Queue-based processing for complex operations
+- **Data Partitioning**: User-based data distribution
+
+## Conclusion
+
+This orchestration system provides a flexible, scalable foundation for integrating multiple external services through MCP servers while maintaining clean separation of concerns and robust error handling. The architecture supports easy addition of new services and tools while providing a consistent user experience through Telegram.
