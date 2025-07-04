@@ -1,36 +1,62 @@
 version: '3.8'
 
 services:
+  # PostgreSQL database with pgvector extension
   postgres:
     image: pgvector/pgvector:pg16
-    ports:
-      - "5432:5432"
     environment:
       POSTGRES_DB: rhea
       POSTGRES_USER: user
       POSTGRES_PASSWORD: password
+      POSTGRES_HOST_AUTH_METHOD: trust
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U user -d rhea"]
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
-  bot:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    command: python main.py
+  # Redis for caching and sessions
+  redis:
+    image: redis:7-alpine
     ports:
-      - "2608:3000"
+      - "6379:6379"
     volumes:
-      - ./app:/app
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Rhea Assistant Bot
+  bot:
+    build: .
+    environment:
+      - DATABASE_URL=postgresql://user:password@postgres:5432/rhea
+      - REDIS_URL=redis://redis:6379
+    env_file:
+      - .env
     depends_on:
       postgres:
         condition: service_healthy
-    env_file:
-      - .env
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    volumes:
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
 volumes:
   postgres_data:
+  redis_data:
